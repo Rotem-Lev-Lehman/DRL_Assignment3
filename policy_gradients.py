@@ -11,6 +11,7 @@ env = gym.make('CartPole-v1')
 np.random.seed(1)
 actor_critic = True
 baseline = True
+use_trained_network = False
 start_time = time.time()
 rewards_num = 0
 satisfying_average = 475
@@ -26,6 +27,7 @@ class PolicyNetwork:
         self.action_size = action_size
         #self.action_size = 3
         self.learning_rate = learning_rate
+        self.name = name
         self.tensorboard = ModifiedTensorBoard(log_dir="logs/{}-{}".format(name, int(time.time())))
 
         with tf.variable_scope(name):
@@ -56,7 +58,7 @@ class ValueNetwork:
     def __init__(self, state_size, learning_rate, name='value_network'):
         self.state_size = state_size
         self.learning_rate = learning_rate
-
+        self.name = name
         with tf.variable_scope(name):
 
             self.state = tf.placeholder(tf.float32, [None, self.state_size], name="state")
@@ -123,13 +125,22 @@ def reshape_action(actions_distribution):
         actions_distribution[i] /= sump
     return actions_distribution
 
+# save the current model to use it later:
+saver = tf.compat.v1.train.Saver()
+#saver = tf.train.Saver()
 
 # Start training the agent with REINFORCE algorithm
 
 
-
 with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
+    if use_trained_network:
+        # restore previous session:
+        saver.restore(sess=sess, save_path="models/" + policy.name)
+
+    else:
+        # initialize new networks:
+        sess.run(tf.global_variables_initializer())
+
     solved = False
     Transition = collections.namedtuple("Transition", ["state", "action", "reward", "next_state", "done"])
     episode_rewards = np.zeros(max_episodes)
@@ -175,6 +186,8 @@ with tf.Session() as sess:
             state = next_state
 
         if solved:
+            if not use_trained_network:
+                saver.save(sess=sess, save_path="models/" + policy.name)
             break
 
         # Compute Rt for each time-step t and update the network's weights
