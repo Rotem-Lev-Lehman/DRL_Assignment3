@@ -6,8 +6,8 @@ import collections
 from ModifiedTensorBoard import ModifiedTensorBoard
 
 #env_name = "CartPole-v1"
-#env_name = "MountainCarContinuous-v0"
-env_name = "Acrobot-v1"
+env_name = "MountainCarContinuous-v0"
+#env_name = "Acrobot-v1"
 part_name = "Part1"
 env = gym.make(env_name)
 exp_ind = 1
@@ -22,8 +22,9 @@ start_time = time.time()
 rewards_num = 0
 cart_pole_satisfying_avg = 475
 acrobot_satisfying_avg = -85
-EPISODES_TO_HELP_NETWORK = 30
-satisfying_average = acrobot_satisfying_avg
+EPISODES_TO_HELP_NETWORK = 60
+mountainCar_satisfying_avg = 475
+satisfying_average = mountainCar_satisfying_avg
 
 max_state_size = 6
 max_action_size = 3
@@ -109,6 +110,7 @@ else:
 max_episodes = 5000
 max_steps = env._max_episode_steps
 max_steps_for_first_episode = 10000
+decay_max_steps_by = 250
 #max_steps_for_first_episode = max_steps
 discount_factor = 0.99
 learning_rate = 0.0004
@@ -156,6 +158,8 @@ with tf.Session() as sess:
     episode_rewards = np.zeros(max_episodes)
     average_rewards = 0.0
 
+    reward_for_breaking_record = 15
+
     first_episode = True
 
     for episode in range(max_episodes):
@@ -163,8 +167,11 @@ with tf.Session() as sess:
         state = env.reset()
         state = state.reshape([1, state_size])
         episode_transitions = []
+        most_left = state[0][0]
+        most_right = state[0][0]
 
-        current_max_steps = max_steps_for_first_episode if first_episode else max_steps
+        current_max_steps = max(max_steps, max_steps_for_first_episode)
+        max_steps_for_first_episode -= decay_max_steps_by
         env._max_episode_steps = current_max_steps
 
         for step in range(current_max_steps):
@@ -176,7 +183,12 @@ with tf.Session() as sess:
             actions_distribution = reshape_action(actions_distribution)
             action = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
 
-            next_state, reward, done, _ = env.step(action)
+            if env_name is "MountainCarContinuous-v0":
+                if action == 0:
+                    action_for_env = [-1]
+                else:
+                    action_for_env = [1]
+            next_state, reward, done, _ = env.step(action_for_env)
             next_state = next_state.reshape([1, state_size])
             next_state_to_transition = reshape_state(next_state)
 
@@ -185,12 +197,23 @@ with tf.Session() as sess:
 
             action_one_hot = np.zeros(max_action_size)
             action_one_hot[action] = 1
-
+            if not done:
+                if next_state[0][0] < most_left:
+                    most_left = next_state[0][0]
+                    reward_for_transition = reward_for_breaking_record
+                elif next_state[0][0] > most_right:
+                    most_right = next_state[0][0]
+                    reward_for_transition = reward_for_breaking_record
+                else:
+                    reward_for_transition = reward
+            else:
+                reward_for_transition = reward
+            '''
             if done and episode < EPISODES_TO_HELP_NETWORK and step < current_max_steps - 1:
                 reward_for_transition = current_max_steps
             else:
                 reward_for_transition = reward
-
+            '''
             episode_transitions.append(Transition(state=state, action=action_one_hot, reward=reward_for_transition, next_state=next_state_to_transition, done=done))
             episode_rewards[episode] += reward
 
@@ -240,6 +263,7 @@ with tf.Session() as sess:
                 _, loss = sess.run([policy.optimizer, policy.loss], feed_dict)
                 policy.tensorboard.update_stats(loss=loss)
 
+        #if episode > 5:
         first_episode = False
 
 print()
