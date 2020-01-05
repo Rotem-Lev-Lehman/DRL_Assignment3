@@ -5,26 +5,37 @@ import tensorflow as tf
 import collections
 from ModifiedTensorBoard import ModifiedTensorBoard
 
-env_name = "Acrobot-v1"
+env_name = "CartPole-v1"
 part_name = "Part1"
 env = gym.make(env_name)
 exp_ind = 1
-model_loading_name = "CartPole-v1_acrobot_1"
+model_loading_name = "CartPole-v1"
 np.random.seed(1)
 actor_critic = True
 baseline = True
 use_trained_network = False
-model_saving_name = env_name + "_" + str(use_trained_network) + '_' + str(exp_ind)
 render = False
 start_time = time.time()
 rewards_num = 0
 cart_pole_satisfying_avg = 475
-acrobot_satisfying_avg = -100
-EPISODES_TO_HELP_NETWORK = 30
-satisfying_average = acrobot_satisfying_avg
+acrobot_satisfying_avg = -85
+satisfying_average = cart_pole_satisfying_avg
+training_acrobotNet = False
+training_mountainNet = False
 
-max_state_size = 6
-max_action_size = 3
+if training_acrobotNet:
+    max_state_size = 6
+    max_action_size = 3
+    model_saving_name = env_name + "_" + 'acrobot' + str(exp_ind)
+elif training_mountainNet:
+    max_state_size = 4
+    max_action_size = 2
+    model_saving_name = env_name + "_" + 'mountain' + str(exp_ind)
+else:
+    max_state_size = 4
+    max_action_size = 2
+    model_saving_name = env_name + "_" + str(exp_ind)
+
 
 
 class PolicyNetwork:
@@ -36,7 +47,6 @@ class PolicyNetwork:
         self.tensorboard = ModifiedTensorBoard(log_dir="logs/{}-{}".format(model_saving_name, int(time.time())))
 
         with tf.variable_scope(name):
-
             self.state = tf.placeholder(tf.float32, [None, self.state_size], name="state")
             self.action = tf.placeholder(tf.int32, [self.action_size], name="action")
             self.R_t = tf.placeholder(tf.float32, name="total_rewards")
@@ -48,7 +58,6 @@ class PolicyNetwork:
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
             self.A1 = tf.nn.relu(self.Z1)
-            #self.output = tf.add(tf.matmul(self.A1, self.W2), self.b2)
             self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
 
             # Softmax probability distribution over actions
@@ -76,7 +85,6 @@ class ValueNetwork:
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
             self.A1 = tf.nn.relu(self.Z1)
-            #self.output = tf.add(tf.matmul(self.A1, self.W2), self.b2)
             self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
 
             # Softmax probability distribution over actions
@@ -103,7 +111,7 @@ else:
 
 max_episodes = 5000
 max_steps = env._max_episode_steps
-max_steps_for_first_episode = 10000
+#max_steps_for_first_episode = max_steps
 discount_factor = 0.99
 learning_rate = 0.0004
 
@@ -145,24 +153,15 @@ with tf.Session() as sess:
     episode_rewards = np.zeros(max_episodes)
     average_rewards = 0.0
 
-    first_episode = True
-
     for episode in range(max_episodes):
         policy.tensorboard.step = episode
         state = env.reset()
         state = state.reshape([1, state_size])
         episode_transitions = []
 
-        current_max_steps = max_steps_for_first_episode if first_episode else max_steps
-        env._max_episode_steps = current_max_steps
-
-        for step in range(current_max_steps):
+        for step in range(max_steps):
             state = reshape_state(state)
-            if first_episode:
-                actions_distribution = np.ones(policy.action_size)
-            else:
-                actions_distribution = sess.run(policy.actions_distribution, {policy.state: state})
-
+            actions_distribution = sess.run(policy.actions_distribution, {policy.state: state})
             actions_distribution = reshape_action(actions_distribution)
             action = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
 
@@ -176,12 +175,10 @@ with tf.Session() as sess:
             action_one_hot = np.zeros(max_action_size)
             action_one_hot[action] = 1
 
-            if done and episode < EPISODES_TO_HELP_NETWORK and step < current_max_steps - 1:
-                reward_for_transition = current_max_steps
-            else:
-                reward_for_transition = reward
+            reward_for_transition = reward
 
-            episode_transitions.append(Transition(state=state, action=action_one_hot, reward=reward_for_transition, next_state=next_state_to_transition, done=done))
+            episode_transitions.append(Transition(state=state, action=action_one_hot, reward=reward_for_transition,
+                                                  next_state=next_state_to_transition, done=done))
             episode_rewards[episode] += reward
 
             if done:
@@ -191,7 +188,8 @@ with tf.Session() as sess:
                 else:
                     average_rewards = np.mean(episode_rewards[:episode+1])
                 policy.tensorboard.update_stats(last_100_average_reward=average_rewards, reward=episode_rewards[episode])
-                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode, episode_rewards[episode], round(average_rewards, 2)))
+                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode, episode_rewards[episode],
+                                                                                   round(average_rewards, 2)))
                 rewards_num += episode_rewards[episode]
                 if episode > 98 and average_rewards > satisfying_average:
                     print(' Solved at episode: ' + str(episode))

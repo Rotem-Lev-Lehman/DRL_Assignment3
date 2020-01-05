@@ -5,29 +5,27 @@ import tensorflow as tf
 import collections
 from ModifiedTensorBoard import ModifiedTensorBoard
 
-#env_name = "CartPole-v1"
 env_name = "MountainCarContinuous-v0"
-#env_name = "Acrobot-v1"
 part_name = "Part1"
 env = gym.make(env_name)
 exp_ind = 1
-model_saving_name = env_name + "_" +str(exp_ind)
-model_loading_name = "CartPole-v1"
+model_loading_name = "CartPole-v1_mountain1"
 np.random.seed(1)
 actor_critic = True
 baseline = True
 use_trained_network = False
+model_saving_name = env_name + "_" + str(use_trained_network) + '_' + str(exp_ind)
 render = False
 start_time = time.time()
 rewards_num = 0
 cart_pole_satisfying_avg = 475
 acrobot_satisfying_avg = -85
-EPISODES_TO_HELP_NETWORK = 60
-mountainCar_satisfying_avg = 475
+EPISODES_TO_HELP_NETWORK = 30
+mountainCar_satisfying_avg = 75
 satisfying_average = mountainCar_satisfying_avg
 
-max_state_size = 6
-max_action_size = 3
+max_state_size = 4
+max_action_size = 2
 
 
 class PolicyNetwork:
@@ -38,7 +36,7 @@ class PolicyNetwork:
         #self.action_size = 3
         self.learning_rate = learning_rate
         self.name = name
-        self.tensorboard = ModifiedTensorBoard(log_dir="logs/{}-{}".format(name, int(time.time())))
+        self.tensorboard = ModifiedTensorBoard(log_dir="logs/{}-{}".format(model_saving_name, int(time.time())))
 
         with tf.variable_scope(name):
 
@@ -158,7 +156,7 @@ with tf.Session() as sess:
     episode_rewards = np.zeros(max_episodes)
     average_rewards = 0.0
 
-    reward_for_breaking_record = 15
+    reward_for_breaking_record = 1.5
 
     first_episode = True
 
@@ -197,7 +195,7 @@ with tf.Session() as sess:
 
             action_one_hot = np.zeros(max_action_size)
             action_one_hot[action] = 1
-            if not done:
+            if not done and episode < EPISODES_TO_HELP_NETWORK:
                 if next_state[0][0] < most_left:
                     most_left = next_state[0][0]
                     reward_for_transition = reward_for_breaking_record
@@ -224,7 +222,7 @@ with tf.Session() as sess:
                 else:
                     average_rewards = np.mean(episode_rewards[:episode+1])
                 policy.tensorboard.update_stats(last_100_average_reward=average_rewards, reward=episode_rewards[episode])
-                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode, episode_rewards[episode], round(average_rewards, 2)))
+                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode, round(episode_rewards[episode], 2), round(average_rewards, 2)))
                 rewards_num += episode_rewards[episode]
                 if episode > 98 and average_rewards > satisfying_average:
                     print(' Solved at episode: ' + str(episode))
