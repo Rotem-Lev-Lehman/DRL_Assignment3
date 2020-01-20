@@ -46,13 +46,14 @@ class PolicyNetwork:
 
             self.W1 = tf.get_variable("W1", [self.state_size, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
             self.b1 = tf.get_variable("b1", [12], initializer=tf.zeros_initializer())
-            self.W2 = tf.get_variable("W2", [12, self.action_size], initializer=tf.contrib.layers.xavier_initializer(seed=0))
-            self.b2 = tf.get_variable("b2", [self.action_size], initializer=tf.zeros_initializer())
+            self.W2 = tf.get_variable("W2", [12, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b2 = tf.get_variable("b2", [12], initializer=tf.zeros_initializer())
+            self.W3 = tf.get_variable("W3", [12, self.action_size], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b3 = tf.get_variable("b3", [self.action_size], initializer=tf.zeros_initializer())
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
-            self.A1 = tf.nn.relu(self.Z1)
-            #self.output = tf.add(tf.matmul(self.A1, self.W2), self.b2)
-            self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.A1 = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.output = tf.add(tf.matmul(self.A1, self.W3), self.b3)
 
             # Softmax probability distribution over actions
             self.actions_distribution = tf.squeeze(tf.nn.softmax(self.output))
@@ -74,13 +75,14 @@ class ValueNetwork:
 
             self.W1 = tf.get_variable("W1", [self.state_size, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
             self.b1 = tf.get_variable("b1", [12], initializer=tf.zeros_initializer())
-            self.W2 = tf.get_variable("W2", [12, 1], initializer=tf.contrib.layers.xavier_initializer(seed=0))
-            self.b2 = tf.get_variable("b2", [1], initializer=tf.zeros_initializer())
+            self.W2 = tf.get_variable("W2", [12, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b2 = tf.get_variable("b2", [12], initializer=tf.zeros_initializer())
+            self.W3 = tf.get_variable("W3", [12, 1], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b3 = tf.get_variable("b3", [1], initializer=tf.zeros_initializer())
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
-            self.A1 = tf.nn.relu(self.Z1)
-            #self.output = tf.add(tf.matmul(self.A1, self.W2), self.b2)
-            self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.A1 = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.output = tf.add(tf.matmul(self.A1, self.W3), self.b3)
 
             # Softmax probability distribution over actions
             self.value = self.output
@@ -89,12 +91,6 @@ class ValueNetwork:
             #self.loss = tf.reduce_mean(self.output * self.R_t)
             self.loss = tf.reduce_mean(tf.square(self.R_t - self.value))  # loss = mse
             self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss)
-
-    def set_weights(self, other):
-        self.W1 = other.W1
-        self.b1 = other.b1
-        self.W2 = other.W2
-        self.b2 = other.b2
 
 
 # Define hyper parameters
@@ -107,17 +103,14 @@ else:
 
 max_episodes = 5000
 max_steps = env._max_episode_steps
-max_steps_for_first_episode = 10000
-decay_max_steps_by = 250
-#max_steps_for_first_episode = max_steps
+max_steps_for_first_episode = 5000
+decay_max_steps_by = 500
 discount_factor = 0.99
 learning_rate = 0.0004
 
 # Initialize the policy network
 tf.reset_default_graph()
-#policy = PolicyNetwork(state_size, action_size, learning_rate)
 policy = PolicyNetwork(max_state_size, max_action_size, learning_rate)
-#value = ValueNetwork(state_size, learning_rate)
 value = ValueNetwork(max_state_size, learning_rate)
 
 
@@ -156,7 +149,7 @@ with tf.Session() as sess:
     episode_rewards = np.zeros(max_episodes)
     average_rewards = 0.0
 
-    reward_for_breaking_record = 1.5
+    reward_for_breaking_record = 3
 
     first_episode = True
 
@@ -165,13 +158,18 @@ with tf.Session() as sess:
         state = env.reset()
         state = state.reshape([1, state_size])
         episode_transitions = []
+        start_x = state[0][0]
         most_left = state[0][0]
         most_right = state[0][0]
 
-        current_max_steps = max(max_steps, max_steps_for_first_episode)
-        max_steps_for_first_episode -= decay_max_steps_by
+        #current_max_steps = max(max_steps, max_steps_for_first_episode)
+        #max_steps_for_first_episode -= decay_max_steps_by
+        if first_episode:
+            current_max_steps = max_steps_for_first_episode
+        else:
+            current_max_steps = max_steps
         env._max_episode_steps = current_max_steps
-
+        reward_for_transition_sum = 0
         for step in range(current_max_steps):
             state = reshape_state(state)
             if first_episode:
@@ -195,26 +193,25 @@ with tf.Session() as sess:
 
             action_one_hot = np.zeros(max_action_size)
             action_one_hot[action] = 1
-            if not done and episode < EPISODES_TO_HELP_NETWORK:
-                if next_state[0][0] < most_left:
+
+            if not done:
+                delta = 0.005
+                if next_state[0][0] < most_left - delta:
                     most_left = next_state[0][0]
-                    reward_for_transition = reward_for_breaking_record
-                elif next_state[0][0] > most_right:
+                    reward_for_transition = reward_for_breaking_record*(current_max_steps/10)/current_max_steps
+                elif next_state[0][0] > most_right + delta:
                     most_right = next_state[0][0]
-                    reward_for_transition = reward_for_breaking_record
+                    reward_for_transition = reward_for_breaking_record*(current_max_steps/10)/current_max_steps
                 else:
                     reward_for_transition = reward
+            elif step < current_max_steps - 1:
+                reward_for_transition = current_max_steps/10
             else:
                 reward_for_transition = reward
-            '''
-            if done and episode < EPISODES_TO_HELP_NETWORK and step < current_max_steps - 1:
-                reward_for_transition = current_max_steps
-            else:
-                reward_for_transition = reward
-            '''
+
             episode_transitions.append(Transition(state=state, action=action_one_hot, reward=reward_for_transition, next_state=next_state_to_transition, done=done))
             episode_rewards[episode] += reward
-
+            reward_for_transition_sum += reward_for_transition
             if done:
                 if episode > 98:
                     # Check if solved
@@ -222,7 +219,7 @@ with tf.Session() as sess:
                 else:
                     average_rewards = np.mean(episode_rewards[:episode+1])
                 policy.tensorboard.update_stats(last_100_average_reward=average_rewards, reward=episode_rewards[episode])
-                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode, round(episode_rewards[episode], 2), round(average_rewards, 2)))
+                print("Episode {} Reward: {} reward_for_transition: {} Average over 100 episodes: {}".format(episode, round(episode_rewards[episode], 2),round(reward_for_transition_sum,2), round(average_rewards, 2)))
                 rewards_num += episode_rewards[episode]
                 if episode > 98 and average_rewards > satisfying_average:
                     print(' Solved at episode: ' + str(episode))

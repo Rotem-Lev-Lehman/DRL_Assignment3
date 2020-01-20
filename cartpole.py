@@ -8,19 +8,19 @@ from ModifiedTensorBoard import ModifiedTensorBoard
 env_name = "CartPole-v1"
 part_name = "Part1"
 env = gym.make(env_name)
-exp_ind = 1
-model_loading_name = "CartPole-v1"
+exp_ind = 2
+model_loading_name = "Acrobot-v1_False_1"
 np.random.seed(1)
 actor_critic = True
 baseline = True
-use_trained_network = False
+use_trained_network = True
 render = False
 start_time = time.time()
 rewards_num = 0
 cart_pole_satisfying_avg = 475
 acrobot_satisfying_avg = -85
 satisfying_average = cart_pole_satisfying_avg
-training_acrobotNet = False
+training_acrobotNet = True
 training_mountainNet = False
 
 if training_acrobotNet:
@@ -53,12 +53,16 @@ class PolicyNetwork:
 
             self.W1 = tf.get_variable("W1", [self.state_size, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
             self.b1 = tf.get_variable("b1", [12], initializer=tf.zeros_initializer())
-            self.W2 = tf.get_variable("W2", [12, self.action_size], initializer=tf.contrib.layers.xavier_initializer(seed=0))
-            self.b2 = tf.get_variable("b2", [self.action_size], initializer=tf.zeros_initializer())
+            self.W2 = tf.get_variable("W2", [12, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b2 = tf.get_variable("b2", [12], initializer=tf.zeros_initializer())
+            self.W3 = tf.get_variable("W3", [12, self.action_size], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b3 = tf.get_variable("b3", [self.action_size], initializer=tf.zeros_initializer())
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
-            self.A1 = tf.nn.relu(self.Z1)
-            self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+
+            self.A1 = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.output = tf.add(tf.matmul(self.A1, self.W3), self.b3)
+
 
             # Softmax probability distribution over actions
             self.actions_distribution = tf.squeeze(tf.nn.softmax(self.output))
@@ -80,12 +84,14 @@ class ValueNetwork:
 
             self.W1 = tf.get_variable("W1", [self.state_size, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
             self.b1 = tf.get_variable("b1", [12], initializer=tf.zeros_initializer())
-            self.W2 = tf.get_variable("W2", [12, 1], initializer=tf.contrib.layers.xavier_initializer(seed=0))
-            self.b2 = tf.get_variable("b2", [1], initializer=tf.zeros_initializer())
+            self.W2 = tf.get_variable("W2", [12, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b2 = tf.get_variable("b2", [12], initializer=tf.zeros_initializer())
+            self.W3 = tf.get_variable("W3", [12, 1], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b3 = tf.get_variable("b3", [1], initializer=tf.zeros_initializer())
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
-            self.A1 = tf.nn.relu(self.Z1)
-            self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.A1 = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.output = tf.add(tf.matmul(self.A1, self.W3), self.b3)
 
             # Softmax probability distribution over actions
             self.value = self.output
@@ -94,12 +100,6 @@ class ValueNetwork:
             #self.loss = tf.reduce_mean(self.output * self.R_t)
             self.loss = tf.reduce_mean(tf.square(self.R_t - self.value))  # loss = mse
             self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss)
-
-    def set_weights(self, other):
-        self.W1 = other.W1
-        self.b1 = other.b1
-        self.W2 = other.W2
-        self.b2 = other.b2
 
 
 # Define hyper parameters
@@ -143,16 +143,26 @@ with tf.Session() as sess:
     if use_trained_network:
         # restore previous session:
         saver.restore(sess=sess, save_path="models/" + part_name + "/" + model_loading_name)
+        """policy.Z1 = tf.stop_gradient(policy.Z1)
+        policy.A1 = tf.stop_gradient(policy.A1)
+        policy.output = tf.stop_gradient(policy.output)
+        value.Z1 = tf.stop_gradient(value.Z1)
+        value.A1 = tf.stop_gradient(value.A1)
+        value.output = tf.stop_gradient(value.output)"""
+        """tvars = tf.trainable_variables()
+        policy_g_vars = [var for var in tvars if 'policy' in var.name and '3' in var.name]
+        value_g_vars = [var for var in tvars if 'value' in var.name and '3' in var.name]
+        #policy.optimizer = tf.train.AdamOptimizer(learning_rate=policy.learning_rate).minimize(policy.loss, var_list=policy_g_vars)
+        #value.optimizer = tf.train.AdamOptimizer(learning_rate=value.learning_rate).minimize(value.loss, var_list=value_g_vars)"""
 
+        sess.run(tf.initialize_variables([policy.W2, policy.b2, value.W2, value.b2]))
     else:
         # initialize new networks:
         sess.run(tf.global_variables_initializer())
-
     solved = False
     Transition = collections.namedtuple("Transition", ["state", "action", "reward", "next_state", "done"])
     episode_rewards = np.zeros(max_episodes)
     average_rewards = 0.0
-
     for episode in range(max_episodes):
         policy.tensorboard.step = episode
         state = env.reset()
@@ -162,20 +172,35 @@ with tf.Session() as sess:
         for step in range(max_steps):
             state = reshape_state(state)
             actions_distribution = sess.run(policy.actions_distribution, {policy.state: state})
-            actions_distribution = reshape_action(actions_distribution)
-            action = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
-
-            next_state, reward, done, _ = env.step(action)
-            next_state = next_state.reshape([1, state_size])
-            next_state_to_transition = reshape_state(next_state)
-
+            #actions_distribution = reshape_action(actions_distribution)
+            #action =
+            action_chosen = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
+            if training_acrobotNet:
+                while step == 0 and action_chosen == 1:
+                    action_chosen = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
+                if action_chosen == 1:
+                   reward_for_transition, done = -1, False
+                   reward = 0
+                else:
+                    if action_chosen == 2:
+                        action = 1
+                    else:
+                        action = action_chosen
+                    next_state, reward, done, _ = env.step(action)
+                    next_state = next_state.reshape([1, state_size])
+                    next_state_to_transition = reshape_state(next_state)
+                    reward_for_transition = reward
+            else:
+                action = action_chosen
+                next_state, reward, done, _ = env.step(action)
+                next_state = next_state.reshape([1, state_size])
+                next_state_to_transition = reshape_state(next_state)
+                reward_for_transition = reward
             if render:
                 env.render()
 
             action_one_hot = np.zeros(max_action_size)
-            action_one_hot[action] = 1
-
-            reward_for_transition = reward
+            action_one_hot[action_chosen] = 1
 
             episode_transitions.append(Transition(state=state, action=action_one_hot, reward=reward_for_transition,
                                                   next_state=next_state_to_transition, done=done))

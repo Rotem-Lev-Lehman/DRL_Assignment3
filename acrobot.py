@@ -8,12 +8,12 @@ from ModifiedTensorBoard import ModifiedTensorBoard
 env_name = "Acrobot-v1"
 part_name = "Part1"
 env = gym.make(env_name)
-exp_ind = 1
-model_loading_name = "CartPole-v1_acrobot_1"
+exp_ind = 2
+model_loading_name = "Acrobot-v1_False_1"
 np.random.seed(1)
 actor_critic = True
 baseline = True
-use_trained_network = False
+use_trained_network = True
 model_saving_name = env_name + "_" + str(use_trained_network) + '_' + str(exp_ind)
 render = False
 start_time = time.time()
@@ -43,13 +43,15 @@ class PolicyNetwork:
 
             self.W1 = tf.get_variable("W1", [self.state_size, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
             self.b1 = tf.get_variable("b1", [12], initializer=tf.zeros_initializer())
-            self.W2 = tf.get_variable("W2", [12, self.action_size], initializer=tf.contrib.layers.xavier_initializer(seed=0))
-            self.b2 = tf.get_variable("b2", [self.action_size], initializer=tf.zeros_initializer())
+            self.W2 = tf.get_variable("W2", [12, 12],initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b2 = tf.get_variable("b2", [12], initializer=tf.zeros_initializer())
+            self.W3 = tf.get_variable("W3", [12, self.action_size], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b3 = tf.get_variable("b3", [self.action_size], initializer=tf.zeros_initializer())
+
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
-            self.A1 = tf.nn.relu(self.Z1)
-            #self.output = tf.add(tf.matmul(self.A1, self.W2), self.b2)
-            self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.A1 = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.output = tf.add(tf.matmul(self.A1, self.W3), self.b3)
 
             # Softmax probability distribution over actions
             self.actions_distribution = tf.squeeze(tf.nn.softmax(self.output))
@@ -69,21 +71,21 @@ class ValueNetwork:
             self.state = tf.placeholder(tf.float32, [None, self.state_size], name="state")
             self.R_t = tf.placeholder(tf.float32, name="total_rewards")
 
-            self.W1 = tf.get_variable("W1", [self.state_size, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.W1 = tf.get_variable("W1", [self.state_size, 12],
+                                      initializer=tf.contrib.layers.xavier_initializer(seed=0))
             self.b1 = tf.get_variable("b1", [12], initializer=tf.zeros_initializer())
-            self.W2 = tf.get_variable("W2", [12, 1], initializer=tf.contrib.layers.xavier_initializer(seed=0))
-            self.b2 = tf.get_variable("b2", [1], initializer=tf.zeros_initializer())
+            self.W2 = tf.get_variable("W2", [12, 12], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b2 = tf.get_variable("b2", [12], initializer=tf.zeros_initializer())
+            self.W3 = tf.get_variable("W3", [12, 1], initializer=tf.contrib.layers.xavier_initializer(seed=0))
+            self.b3 = tf.get_variable("b3", [1], initializer=tf.zeros_initializer())
 
             self.Z1 = tf.add(tf.matmul(self.state, self.W1), self.b1)
-            self.A1 = tf.nn.relu(self.Z1)
-            #self.output = tf.add(tf.matmul(self.A1, self.W2), self.b2)
-            self.output = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.A1 = tf.add(tf.matmul(self.Z1, self.W2), self.b2)
+            self.output = tf.add(tf.matmul(self.A1, self.W3), self.b3)
 
             # Softmax probability distribution over actions
             self.value = self.output
-            #self.value = tf.squeeze(tf.nn.relu(self.output))
             # Loss with negative log probability
-            #self.loss = tf.reduce_mean(self.output * self.R_t)
             self.loss = tf.reduce_mean(tf.square(self.R_t - self.value))  # loss = mse
             self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss)
 
@@ -131,6 +133,16 @@ def reshape_action(actions_distribution):
 saver = tf.compat.v1.train.Saver()
 
 # Start training the agent with REINFORCE algorithm
+def calculate_total_discount_return_for_step(episode_transitions):
+    returns = []
+    total_return_until_now = 0
+    for i in range(len(episode_transitions) - 1, -1, -1):
+        total_return_until_now = total_return_until_now * discount_factor + episode_transitions[i].reward
+        returns.insert(0, total_return_until_now)
+        #sum(discount_factor ** i * t.reward for i, t in enumerate(episode_transitions[t:]))  # Rt
+    return returns
+
+
 with tf.Session() as sess:
     if use_trained_network:
         # restore previous session:
@@ -145,13 +157,17 @@ with tf.Session() as sess:
     episode_rewards = np.zeros(max_episodes)
     average_rewards = 0.0
 
-    first_episode = True
+    first_episode = not use_trained_network
+
 
     for episode in range(max_episodes):
         policy.tensorboard.step = episode
         state = env.reset()
         state = state.reshape([1, state_size])
         episode_transitions = []
+        s = env.state
+        max_height_till_now = (-np.cos(s[0]) - np.cos(s[1] + s[0]))
+        total_rewards_for_episode = 0
 
         current_max_steps = max_steps_for_first_episode if first_episode else max_steps
         env._max_episode_steps = current_max_steps
@@ -175,12 +191,32 @@ with tf.Session() as sess:
 
             action_one_hot = np.zeros(max_action_size)
             action_one_hot[action] = 1
+            s = env.state
+            height = (-np.cos(s[0]) - np.cos(s[1] + s[0]))
+            reward_for_transition = reward
+            if done:
+                reward_for_transition += height*(current_max_steps-step)
+            """if done and first_episode and step < current_max_steps - 1:
+                reward_for_transition = 1000
+                print (height)
+            elif not first_episode:
 
-            if done and episode < EPISODES_TO_HELP_NETWORK and step < current_max_steps - 1:
-                reward_for_transition = current_max_steps
+                #reward_for_transition = reward
+
+                reward_for_transition = height
+                #if height > max_height_till_now:
+                #    max_height_till_now = height
+                #    reward_for_transition += 0.5
+
+                #if done and step < current_max_steps - 1:
+                #    reward_for_transition += 100
+                
+                #reward_for_transition += (-np.cos(s[0]) - np.cos(s[1] + s[0]))
+                #reward_for_transition += -np.cos(s[0])
             else:
                 reward_for_transition = reward
-
+            """
+            total_rewards_for_episode += reward_for_transition
             episode_transitions.append(Transition(state=state, action=action_one_hot, reward=reward_for_transition, next_state=next_state_to_transition, done=done))
             episode_rewards[episode] += reward
 
@@ -191,7 +227,7 @@ with tf.Session() as sess:
                 else:
                     average_rewards = np.mean(episode_rewards[:episode+1])
                 policy.tensorboard.update_stats(last_100_average_reward=average_rewards, reward=episode_rewards[episode])
-                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode, episode_rewards[episode], round(average_rewards, 2)))
+                print("Episode {} Reward: {} Trans_reward: {} Average over 100 episodes: {}".format(episode, episode_rewards[episode], total_rewards_for_episode, round(average_rewards, 2)))
                 rewards_num += episode_rewards[episode]
                 if episode > 98 and average_rewards > satisfying_average:
                     print(' Solved at episode: ' + str(episode))
@@ -206,9 +242,11 @@ with tf.Session() as sess:
 
         # Compute Rt for each time-step t and update the network's weights
         # update the weights of the two networks if we are using actor critic
+        total_discounted_return_for_step = calculate_total_discount_return_for_step(episode_transitions)
         for t, transition in enumerate(episode_transitions):
             if actor_critic:
-                total_discounted_return = sum(discount_factor ** i * t.reward for i, t in enumerate(episode_transitions[t:]))  # Rt
+                #total_discounted_return = sum(discount_factor ** i * t.reward for i, t in enumerate(episode_transitions[t:]))  # Rt
+                total_discounted_return = total_discounted_return_for_step[t]
                 if transition.done:
                     next_state_value = 0
                 else:
