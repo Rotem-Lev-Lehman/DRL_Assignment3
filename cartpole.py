@@ -8,7 +8,7 @@ from ModifiedTensorBoard import ModifiedTensorBoard
 env_name = "CartPole-v1"
 part_name = "Part1"
 env = gym.make(env_name)
-exp_ind = 2
+exp_ind = 5
 model_loading_name = "Acrobot-v1_False_1"
 np.random.seed(1)
 actor_critic = True
@@ -145,17 +145,9 @@ with tf.Session() as sess:
         saver.restore(sess=sess, save_path="models/" + part_name + "/" + model_loading_name)
         """policy.Z1 = tf.stop_gradient(policy.Z1)
         policy.A1 = tf.stop_gradient(policy.A1)
-        policy.output = tf.stop_gradient(policy.output)
         value.Z1 = tf.stop_gradient(value.Z1)
-        value.A1 = tf.stop_gradient(value.A1)
-        value.output = tf.stop_gradient(value.output)"""
-        """tvars = tf.trainable_variables()
-        policy_g_vars = [var for var in tvars if 'policy' in var.name and '3' in var.name]
-        value_g_vars = [var for var in tvars if 'value' in var.name and '3' in var.name]
-        #policy.optimizer = tf.train.AdamOptimizer(learning_rate=policy.learning_rate).minimize(policy.loss, var_list=policy_g_vars)
-        #value.optimizer = tf.train.AdamOptimizer(learning_rate=value.learning_rate).minimize(value.loss, var_list=value_g_vars)"""
-
-        sess.run(tf.initialize_variables([policy.W2, policy.b2, value.W2, value.b2]))
+        value.A1 = tf.stop_gradient(value.A1)"""
+        sess.run(tf.initialize_variables([policy.W3, policy.b3, value.W3, value.b3]))
     else:
         # initialize new networks:
         sess.run(tf.global_variables_initializer())
