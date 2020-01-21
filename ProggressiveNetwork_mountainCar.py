@@ -1,49 +1,42 @@
+import copy
+
 import gym
 import numpy as np
 import collections
 from Proggressive_Stuff import *
 
-env_name = "CartPole-v1"
+env_name = "MountainCarContinuous-v0"
 part_name = "Part1"
 env = gym.make(env_name)
-exp_ind = 11
-
-model1_loading_name = "Acrobot-v1_False_1"
-state_size1 = 6
-action_size1 = 3
-
-model2_loading_name = "MountainCarContinuous-v0_False_2"
-state_size2 = 4
-action_size2 = 2
-
+exp_ind = 10
 np.random.seed(1)
 actor_critic = True
 baseline = True
 use_trained_network = False
+model_saving_name = env_name + "_" + str(use_trained_network) + '_' + str(exp_ind)
 render = False
 start_time = time.time()
 rewards_num = 0
 cart_pole_satisfying_avg = 475
 acrobot_satisfying_avg = -85
-satisfying_average = cart_pole_satisfying_avg
-training_acrobotNet = False
-training_mountainNet = False
+EPISODES_TO_HELP_NETWORK = 30
+mountainCar_satisfying_avg = 75
+satisfying_average = mountainCar_satisfying_avg
 
-if training_acrobotNet:
-    max_state_size = 6
-    max_action_size = 3
-    model_saving_name = env_name + "_" + 'acrobot' + str(exp_ind)
-elif training_mountainNet:
-    max_state_size = 4
-    max_action_size = 2
-    model_saving_name = env_name + "_" + 'mountain' + str(exp_ind)
-else:
-    max_state_size = 4
-    max_action_size = 2
-    model_saving_name = env_name + "_" + str(exp_ind)
+max_state_size = 4
+max_action_size = 2
+
+model1_loading_name = "CartPole-v1_1"
+state_size1 = 4
+action_size1 = 2
+
+model2_loading_name = "Acrobot-v1_False_1"
+state_size2 = 6
+action_size2 = 3
 
 # Define hyper parameters
 state_size = env.observation_space.shape[0]
+state_size_for_reshape = 4
 if type(env.action_space) == gym.spaces.box.Box:
     action_size = 2
 else:
@@ -51,7 +44,8 @@ else:
 
 max_episodes = 5000
 max_steps = env._max_episode_steps
-# max_steps_for_first_episode = max_steps
+max_steps_for_first_episode = 10000
+decay_max_steps_by = 250
 discount_factor = 0.99
 learning_rate = 0.0004
 
@@ -69,8 +63,10 @@ policy = PolicyNetwork(max_state_size, max_action_size, learning_rate, policy_ne
 value = ValueNetwork(max_state_size, learning_rate, value_network1, value_network2)
 
 
-def reshape_state(state, policy):
-    for i in range(policy.state_size - state_size):
+def reshape_state(state, policy, flag = True):
+    a = copy.deepcopy(state)
+    reshape_size = state_size_for_reshape if flag else state_size
+    for i in range(policy.state_size - reshape_size):
         state = np.append(state, 0)
     return state.reshape((1, policy.state_size))
 
@@ -97,47 +93,66 @@ with tf.Session() as sess:
     Transition = collections.namedtuple("Transition", ["state", "action", "reward", "next_state", "done"])
     episode_rewards = np.zeros(max_episodes)
     average_rewards = 0.0
+
+    reward_for_breaking_record = 1.5
+
+    first_episode = True
+
     for episode in range(max_episodes):
         policy.tensorboard.step = episode
         state = env.reset()
         state = state.reshape([1, state_size])
         episode_transitions = []
+        most_left = state[0][0]
+        most_right = state[0][0]
 
-        for step in range(max_steps):
-            state = reshape_state(state, policy)
-            actions_distribution = sess.run(policy.actions_distribution, {policy.state: reshape_state(state, policy),
-                                                                          policy_network1.state: reshape_state(state,
-                                                                                                               policy_network1),
-                                                                          policy_network2.state: reshape_state(state,
-                                                                                                               policy_network2)})
-            action_chosen = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
-            if training_acrobotNet:
-                while step == 0 and action_chosen == 1:
-                    action_chosen = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
-                if action_chosen == 1:
-                    reward_for_transition, done = -1, False
-                    reward = 0
-                else:
-                    if action_chosen == 2:
-                        action = 1
-                    else:
-                        action = action_chosen
-                    next_state, reward, done, _ = env.step(action)
-                    next_state = next_state.reshape([1, state_size])
-                    next_state_to_transition = reshape_state(next_state, policy)
-                    reward_for_transition = reward
+        current_max_steps = max(max_steps, max_steps_for_first_episode)
+        max_steps_for_first_episode -= decay_max_steps_by
+        env._max_episode_steps = current_max_steps
+
+        for step in range(current_max_steps):
+            state = reshape_state(state, policy, False)
+            if first_episode:
+                actions_distribution = np.ones(policy.action_size)
             else:
-                action = action_chosen
-                next_state, reward, done, _ = env.step(action)
-                next_state = next_state.reshape([1, state_size])
-                next_state_to_transition = reshape_state(next_state, policy)
-                reward_for_transition = reward
+                actions_distribution = sess.run(policy.actions_distribution,
+                                                {policy.state: state,
+                                                 policy_network1.state: reshape_state(state, policy_network1),
+                                                 policy_network2.state: reshape_state(state, policy_network2)})
+            actions_distribution = reshape_action(actions_distribution)
+            action = np.random.choice(np.arange(len(actions_distribution)), p=actions_distribution)
+
+            if env_name is "MountainCarContinuous-v0":
+                if action == 0:
+                    action_for_env = [-1]
+                else:
+                    action_for_env = [1]
+            next_state, reward, done, _ = env.step(action_for_env)
+            next_state = next_state.reshape([1, state_size])
+            next_state_to_transition = reshape_state(next_state, policy, False)
+
             if render:
                 env.render()
 
             action_one_hot = np.zeros(max_action_size)
-            action_one_hot[action_chosen] = 1
-
+            action_one_hot[action] = 1
+            if not done and episode < EPISODES_TO_HELP_NETWORK:
+                if next_state[0][0] < most_left:
+                    most_left = next_state[0][0]
+                    reward_for_transition = reward_for_breaking_record
+                elif next_state[0][0] > most_right:
+                    most_right = next_state[0][0]
+                    reward_for_transition = reward_for_breaking_record
+                else:
+                    reward_for_transition = reward
+            else:
+                reward_for_transition = reward
+            '''
+            if done and episode < EPISODES_TO_HELP_NETWORK and step < current_max_steps - 1:
+                reward_for_transition = current_max_steps
+            else:
+                reward_for_transition = reward
+            '''
             episode_transitions.append(Transition(state=state, action=action_one_hot, reward=reward_for_transition,
                                                   next_state=next_state_to_transition, done=done))
             episode_rewards[episode] += reward
@@ -150,7 +165,8 @@ with tf.Session() as sess:
                     average_rewards = np.mean(episode_rewards[:episode + 1])
                 policy.tensorboard.update_stats(last_100_average_reward=average_rewards,
                                                 reward=episode_rewards[episode])
-                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode, episode_rewards[episode],
+                print("Episode {} Reward: {} Average over 100 episodes: {}".format(episode,
+                                                                                   round(episode_rewards[episode], 2),
                                                                                    round(average_rewards, 2)))
                 rewards_num += episode_rewards[episode]
                 if episode > 98 and average_rewards > satisfying_average:
@@ -173,13 +189,13 @@ with tf.Session() as sess:
                 if transition.done:
                     next_state_value = 0
                 else:
-                    next_state_value = sess.run(value.value, {value.state: reshape_state(transition.next_state, value),
+                    next_state_value = sess.run(value.value, {value.state: transition.next_state,
                                                               value_network1.state: reshape_state(transition.next_state,
                                                                                                   value_network1),
                                                               value_network2.state: reshape_state(transition.next_state,
                                                                                                   value_network2)})
                 target_for_value = total_discounted_return
-                delta = target_for_value - sess.run(value.value, {value.state: reshape_state(transition.state, value),
+                delta = target_for_value - sess.run(value.value, {value.state: transition.state,
                                                                   value_network1.state: reshape_state(transition.state,
                                                                                                       value_network1),
                                                                   value_network2.state: reshape_state(transition.state,

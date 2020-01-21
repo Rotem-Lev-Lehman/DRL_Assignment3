@@ -190,8 +190,7 @@ with tf.Session() as sess:
 
             action_one_hot = np.zeros(max_action_size)
             action_one_hot[action] = 1
-            #  and episode < EPISODES_TO_HELP_NETWORK
-            if not done:
+            if not done and episode < EPISODES_TO_HELP_NETWORK:
                 if next_state[0][0] < most_left:
                     most_left = next_state[0][0]
                     reward_for_transition = reward_for_breaking_record
